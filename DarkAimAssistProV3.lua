@@ -1,736 +1,1004 @@
-
--- DARK AIM ASSIST PRO V7
--- For your own Roblox Studio game.
--- LocalScript: StarterPlayer > StarterPlayerScripts
+--========================================================
+-- DARK AIM ASSIST V11 | COMPLETE HUB
+-- Put this LocalScript in StarterPlayerScripts
+-- For use in your own Roblox experience.
 --
--- Controls:
--- PC: Q = Lock/unlock; hold RMB = Aim
--- Mobile: LOCK, AIM, AUTO buttons
---
--- Supported Tool: contains RemoteEvent named ShootEvent.
--- Server must validate shots and apply damage.
+-- Compatible weapon setup:
+-- Tool
+--   ShootEvent (RemoteEvent)
+--   ServerDamage (server Script that validates shots)
+--========================================================
 
 local Players = game:GetService("Players")
-local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local camera = workspace.CurrentCamera
 
-local SETTINGS = {
-    Enabled = true,
-    Smoothness = 10,
-    FOV = 180,
-    MaxDistance = 250,
-    TargetPart = "Head",
-    ShowFOV = true,
-    HoldToAim = true,
-    AutoFire = true,
-    PredictMovement = true,
-    PredictionStrength = 0.12,
+--========================================================
+-- CONFIGURATION
+--========================================================
+
+local ACCESS_KEY = "V7q!N4x#P9mL2@kR"
+
+local Settings = {
+	AutoTarget = true,
+	AutoFire = true,
+	ShowFOV = true,
+	FOV = 180,
+	MaxDistance = 250,
+	Smoothness = 10,
+	FireInterval = 0.22,
+	ScanInterval = 0.20,
 }
 
-local RENDER_NAME = "DarkAimAssistProV7"
-local TUTORIAL_ATTRIBUTE = "DarkAimTutorialSeenV7"
-local FIRE_RATE = 0.21
+local PURPLE = Color3.fromRGB(157, 91, 255)
+local PURPLE_DARK = Color3.fromRGB(91, 48, 158)
+local BG = Color3.fromRGB(12, 11, 18)
+local PANEL = Color3.fromRGB(22, 20, 31)
+local PANEL_LIGHT = Color3.fromRGB(31, 28, 44)
+local WHITE = Color3.fromRGB(245, 242, 255)
+local MUTED = Color3.fromRGB(155, 148, 174)
+local GREEN = Color3.fromRGB(91, 220, 151)
+local RED = Color3.fromRGB(255, 105, 115)
 
-local lockedTarget = nil
-local rightMouseDown = false
-local mobileAim = false
+local currentTarget
+local lastScan = 0
 local lastShot = 0
-local closed = false
-local connections = {}
-local characterConnections = {}
+local unlocked = false
 
-pcall(function()
-    RunService:UnbindFromRenderStep(RENDER_NAME)
-end)
+--========================================================
+-- GUI CREATION
+--========================================================
 
-local oldGui = playerGui:FindFirstChild("DarkAimAssistProV7")
-if oldGui then oldGui:Destroy() end
-
-local function connect(signal, callback)
-    local c = signal:Connect(callback)
-    table.insert(connections, c)
-    return c
-end
-
-local function clearCharacterConnections()
-    for _, c in ipairs(characterConnections) do
-        c:Disconnect()
-    end
-    table.clear(characterConnections)
-end
-
-local function corner(object, radius)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, radius)
-    c.Parent = object
-end
-
-local function makeButton(parent, text, size, position)
-    local b = Instance.new("TextButton")
-    b.Size = size
-    b.Position = position
-    b.BackgroundColor3 = Color3.fromRGB(48, 38, 66)
-    b.TextColor3 = Color3.fromRGB(240, 235, 255)
-    b.Text = text
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 13
-    b.AutoButtonColor = true
-    b.Parent = parent
-    corner(b, 8)
-    return b
-end
-
--- Main GUI
 local gui = Instance.new("ScreenGui")
-gui.Name = "DarkAimAssistProV7"
+gui.Name = "DarkAimV11"
 gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 100
 gui.Parent = playerGui
 
-local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(410, 390)
-main.Position = UDim2.new(0.5, -205, 0.5, -195)
-main.BackgroundColor3 = Color3.fromRGB(20, 19, 27)
-main.BorderSizePixel = 0
-main.Parent = gui
-corner(main, 10)
+local function corner(obj, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = obj
+	return c
+end
 
-local outline = Instance.new("UIStroke")
-outline.Color = Color3.fromRGB(140, 95, 215)
-outline.Thickness = 1.5
-outline.Parent = main
+local function stroke(obj, color, thickness)
+	local s = Instance.new("UIStroke")
+	s.Color = color
+	s.Thickness = thickness or 1
+	s.Transparency = 0.15
+	s.Parent = obj
+	return s
+end
 
-local top = Instance.new("Frame")
-top.Size = UDim2.new(1, 0, 0, 44)
-top.BackgroundColor3 = Color3.fromRGB(39, 30, 54)
-top.BorderSizePixel = 0
-top.Parent = main
-corner(top, 10)
+local function tween(obj, duration, properties)
+	local t = TweenService:Create(
+		obj,
+		TweenInfo.new(duration, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+		properties
+	)
+	t:Play()
+	return t
+end
 
-local heading = Instance.new("TextLabel")
-heading.Size = UDim2.new(1, -55, 1, 0)
-heading.Position = UDim2.fromOffset(12, 0)
-heading.BackgroundTransparency = 1
-heading.Text = "DARK AIM ASSIST PRO V7"
-heading.TextColor3 = Color3.fromRGB(225, 205, 255)
-heading.Font = Enum.Font.GothamBold
-heading.TextSize = 14
-heading.TextXAlignment = Enum.TextXAlignment.Left
-heading.Parent = top
+local function label(parent, text, size, pos, fontSize, color)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Size = size
+	l.Position = pos
+	l.Text = text
+	l.TextColor3 = color or WHITE
+	l.TextSize = fontSize or 14
+	l.Font = Enum.Font.Gotham
+	l.TextWrapped = true
+	l.Parent = parent
+	return l
+end
 
-local closeButton = makeButton(
-    top, "X", UDim2.fromOffset(32, 28),
-    UDim2.new(1, -40, 0, 8)
+local function button(parent, text, size, pos)
+	local b = Instance.new("TextButton")
+	b.Size = size
+	b.Position = pos
+	b.BackgroundColor3 = PANEL_LIGHT
+	b.Text = text
+	b.TextColor3 = WHITE
+	b.TextSize = 13
+	b.Font = Enum.Font.GothamSemibold
+	b.AutoButtonColor = false
+	b.Parent = parent
+	corner(b, 9)
+	stroke(b, Color3.fromRGB(65, 57, 83), 1)
+
+	b.MouseEnter:Connect(function()
+		tween(b, 0.15, {BackgroundColor3 = Color3.fromRGB(55, 39, 77)})
+	end)
+
+	b.MouseLeave:Connect(function()
+		tween(b, 0.15, {BackgroundColor3 = PANEL_LIGHT})
+	end)
+
+	return b
+end
+
+local function newFrame(parent, size, pos, color)
+	local f = Instance.new("Frame")
+	f.Size = size
+	f.Position = pos
+	f.BackgroundColor3 = color or PANEL
+	f.BorderSizePixel = 0
+	f.Parent = parent
+	corner(f, 12)
+	return f
+end
+
+--========================================================
+-- ACCESS KEY SCREEN
+--========================================================
+
+local keyScreen = Instance.new("Frame")
+keyScreen.Size = UDim2.fromScale(1, 1)
+keyScreen.BackgroundColor3 = BG
+keyScreen.Parent = gui
+
+local keyCard = newFrame(
+	keyScreen,
+	UDim2.new(0, 370, 0, 330),
+	UDim2.new(0.5, -185, 0.5, -165),
+	PANEL
 )
-closeButton.BackgroundColor3 = Color3.fromRGB(135, 45, 60)
+stroke(keyCard, PURPLE, 1.5)
 
--- Draggable window
+local keyLogo = label(
+	keyCard, "DARK AIM",
+	UDim2.new(1, 0, 0, 55),
+	UDim2.new(0, 0, 0, 28),
+	29, PURPLE
+)
+keyLogo.Font = Enum.Font.GothamBlack
+
+label(
+	keyCard, "PRIVATE ACCESS",
+	UDim2.new(1, 0, 0, 25),
+	UDim2.new(0, 0, 0, 82),
+	11, MUTED
+)
+
+label(
+	keyCard, "Enter your access key to continue",
+	UDim2.new(1, -30, 0, 30),
+	UDim2.new(0, 15, 0, 125),
+	13, WHITE
+)
+
+local keyBox = Instance.new("TextBox")
+keyBox.Size = UDim2.new(1, -50, 0, 46)
+keyBox.Position = UDim2.new(0, 25, 0, 165)
+keyBox.BackgroundColor3 = BG
+keyBox.TextColor3 = WHITE
+keyBox.PlaceholderColor3 = MUTED
+keyBox.PlaceholderText = "Enter access key..."
+keyBox.Text = ""
+keyBox.TextSize = 14
+keyBox.Font = Enum.Font.Gotham
+keyBox.ClearTextOnFocus = false
+keyBox.Parent = keyCard
+corner(keyBox, 9)
+stroke(keyBox, PURPLE, 1)
+
+local unlock = button(
+	keyCard, "UNLOCK HUB",
+	UDim2.new(1, -50, 0, 44),
+	UDim2.new(0, 25, 0, 225)
+)
+unlock.BackgroundColor3 = PURPLE_DARK
+
+local keyStatus = label(
+	keyCard, "",
+	UDim2.new(1, -30, 0, 25),
+	UDim2.new(0, 15, 1, -32),
+	11, RED
+)
+
+--========================================================
+-- LOADING SCREEN
+--========================================================
+
+local loading = Instance.new("Frame")
+loading.Size = UDim2.fromScale(1, 1)
+loading.BackgroundColor3 = BG
+loading.Visible = false
+loading.Parent = gui
+
+local loadingLogo = label(
+	loading, "DARK AIM",
+	UDim2.new(1, 0, 0, 60),
+	UDim2.new(0, 0, 0.35, 0),
+	34, PURPLE
+)
+loadingLogo.Font = Enum.Font.GothamBlack
+
+local loadingSub = label(
+	loading, "Preparing your hub...",
+	UDim2.new(1, 0, 0, 30),
+	UDim2.new(0, 0, 0.45, 0),
+	13, MUTED
+)
+
+local progressBack = newFrame(
+	loading,
+	UDim2.new(0, 300, 0, 8),
+	UDim2.new(0.5, -150, 0.55, 0),
+	PANEL_LIGHT
+)
+corner(progressBack, 10)
+
+local progress = Instance.new("Frame")
+progress.Size = UDim2.new(0, 0, 1, 0)
+progress.BackgroundColor3 = PURPLE
+progress.BorderSizePixel = 0
+progress.Parent = progressBack
+corner(progress, 10)
+
+local spinner = label(
+	loading, "◌",
+	UDim2.new(0, 50, 0, 50),
+	UDim2.new(0.5, -25, 0.62, 0),
+	34, PURPLE
+)
+
+local spinning = true
+task.spawn(function()
+	while spinning and spinner.Parent do
+		spinner.Rotation += 8
+		task.wait(0.02)
+	end
+end)
+
+--========================================================
+-- MAIN HUB
+--========================================================
+
+local main = newFrame(
+	gui,
+	UDim2.new(0, 650, 0, 430),
+	UDim2.new(0.5, -325, 0.5, -215),
+	BG
+)
+main.Visible = false
+stroke(main, Color3.fromRGB(92, 67, 130), 1.5)
+
+local top = newFrame(
+	main,
+	UDim2.new(1, 0, 0, 57),
+	UDim2.new(0, 0, 0, 0),
+	PANEL
+)
+
+local topTitle = label(
+	top, "DARK AIM",
+	UDim2.new(0, 180, 1, 0),
+	UDim2.new(0, 20, 0, 0),
+	19, PURPLE
+)
+topTitle.Font = Enum.Font.GothamBlack
+topTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+label(
+	top, "V11  •  CONTROL CENTER",
+	UDim2.new(0, 220, 1, 0),
+	UDim2.new(0, 155, 0, 0),
+	10, MUTED
+).TextXAlignment = Enum.TextXAlignment.Left
+
+local minimize = button(
+	top, "—",
+	UDim2.new(0, 38, 0, 34),
+	UDim2.new(1, -52, 0, 11)
+)
+minimize.TextSize = 19
+
+-- Dragging the window from the top bar.
 local dragging = false
 local dragStart
-local startPosition
+local originalPosition
 
-connect(top.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPosition = main.Position
-    end
+top.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		originalPosition = main.Position
+	end
 end)
 
-connect(UIS.InputChanged, function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
-        main.Position = UDim2.new(
-            startPosition.X.Scale,
-            startPosition.X.Offset + delta.X,
-            startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y
-        )
-    end
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (
+		input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch
+		) then
+		local delta = input.Position - dragStart
+		main.Position = UDim2.new(
+			originalPosition.X.Scale,
+			originalPosition.X.Offset + delta.X,
+			originalPosition.Y.Scale,
+			originalPosition.Y.Offset + delta.Y
+		)
+	end
 end)
 
-connect(UIS.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = false
-    end
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
 end)
 
--- Tabs
-local tabs = Instance.new("Frame")
-tabs.Position = UDim2.fromOffset(10, 52)
-tabs.Size = UDim2.new(1, -20, 0, 34)
-tabs.BackgroundTransparency = 1
-tabs.Parent = main
+local restore = button(
+	gui, "DA",
+	UDim2.new(0, 52, 0, 52),
+	UDim2.new(0, 18, 0.5, -26)
+)
+restore.Visible = false
+restore.TextColor3 = PURPLE
+restore.TextSize = 17
+stroke(restore, PURPLE, 1.5)
 
-local tabLayout = Instance.new("UIListLayout")
-tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.Padding = UDim.new(0, 5)
-tabLayout.Parent = tabs
+minimize.MouseButton1Click:Connect(function()
+	main.Visible = false
+	restore.Visible = true
+end)
 
-local content = Instance.new("Frame")
-content.Position = UDim2.fromOffset(12, 94)
-content.Size = UDim2.new(1, -24, 1, -127)
-content.BackgroundTransparency = 1
-content.Parent = main
+restore.MouseButton1Click:Connect(function()
+	main.Visible = true
+	restore.Visible = false
+end)
+
+--========================================================
+-- SIDEBAR
+--========================================================
+
+local sidebar = newFrame(
+	main,
+	UDim2.new(0, 155, 1, -75),
+	UDim2.new(0, 12, 0, 65),
+	PANEL
+)
+
+label(
+	sidebar, "NAVIGATION",
+	UDim2.new(1, -20, 0, 30),
+	UDim2.new(0, 12, 0, 12),
+	10, MUTED
+).TextXAlignment = Enum.TextXAlignment.Left
+
+local content = newFrame(
+	main,
+	UDim2.new(1, -190, 1, -75),
+	UDim2.new(0, 178, 0, 65),
+	PANEL
+)
 
 local pages = {}
+local navButtons = {}
 
 local function createPage(name)
-    local page = Instance.new("Frame")
-    page.Name = name
-    page.Size = UDim2.fromScale(1, 1)
-    page.BackgroundTransparency = 1
-    page.Visible = false
-    page.Parent = content
-
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 7)
-    layout.Parent = page
-
-    pages[name] = page
-    return page
+	local page = Instance.new("Frame")
+	page.Name = name
+	page.Size = UDim2.fromScale(1, 1)
+	page.BackgroundTransparency = 1
+	page.Visible = false
+	page.Parent = content
+	pages[name] = page
+	return page
 end
 
-local aimPage = createPage("AIM")
-local visualPage = createPage("VISUALS")
-local settingsPage = createPage("SETTINGS")
+local function switchPage(name)
+	for pageName, page in pairs(pages) do
+		page.Visible = pageName == name
+	end
 
-local function showPage(name)
-    for pageName, page in pairs(pages) do
-        page.Visible = pageName == name
-    end
+	for buttonName, nav in pairs(navButtons) do
+		nav.BackgroundColor3 = buttonName == name
+			and PURPLE_DARK or PANEL_LIGHT
+	end
 end
 
-for _, name in ipairs({"AIM", "VISUALS", "SETTINGS"}) do
-    local tab = makeButton(
-        tabs, name, UDim2.fromOffset(125, 32),
-        UDim2.new()
-    )
-
-    connect(tab.MouseButton1Click, function()
-        showPage(name)
-    end)
+local function createNav(name, text, y)
+	local nav = button(
+		sidebar, text,
+		UDim2.new(1, -20, 0, 42),
+		UDim2.new(0, 10, 0, y)
+	)
+	navButtons[name] = nav
+	nav.MouseButton1Click:Connect(function()
+		switchPage(name)
+	end)
 end
 
-showPage("AIM")
+createNav("Home", "⌂   Dashboard", 52)
+createNav("Aim", "◎   Aim Settings", 102)
+createNav("Visuals", "◉   Visuals", 152)
+createNav("Settings", "⚙   Settings", 202)
 
-local status = Instance.new("TextLabel")
-status.Position = UDim2.new(0, 12, 1, -25)
-status.Size = UDim2.new(1, -24, 0, 18)
-status.BackgroundTransparency = 1
-status.Text = "Q: Lock | Hold RMB: Aim"
-status.TextColor3 = Color3.fromRGB(190, 170, 220)
-status.Font = Enum.Font.Gotham
-status.TextSize = 11
-status.Parent = main
-
--- Settings buttons
-local function addSetting(parent, name, callback)
-    local b = makeButton(
-        parent, name,
-        UDim2.new(1, 0, 0, 35),
-        UDim2.new()
-    )
-    connect(b.MouseButton1Click, callback)
-    return b
-end
-
-local function updateSettings()
-    for _, b in ipairs(aimPage:GetChildren()) do
-        if b:IsA("TextButton") then
-            if b.Name == "Enabled" then
-                b.Text = "Aim Assist: " .. (SETTINGS.Enabled and "ON" or "OFF")
-            elseif b.Name == "Smooth" then
-                b.Text = "Smoothness: " .. SETTINGS.Smoothness
-            elseif b.Name == "FOV" then
-                b.Text = "FOV: " .. SETTINGS.FOV
-            elseif b.Name == "Distance" then
-                b.Text = "Max Distance: " .. SETTINGS.MaxDistance
-            elseif b.Name == "Part" then
-                b.Text = "Target Part: " .. SETTINGS.TargetPart
-            end
-        end
-    end
-
-    for _, b in ipairs(visualPage:GetChildren()) do
-        if b:IsA("TextButton") then
-            b.Text = "Show FOV: " .. (SETTINGS.ShowFOV and "ON" or "OFF")
-        end
-    end
-
-    for _, b in ipairs(settingsPage:GetChildren()) do
-        if b:IsA("TextButton") then
-            if b.Name == "Hold" then
-                b.Text = "Hold RMB to Aim: " .. (SETTINGS.HoldToAim and "ON" or "OFF")
-            elseif b.Name == "Auto" then
-                b.Text = "Auto Fire: " .. (SETTINGS.AutoFire and "ON" or "OFF")
-            elseif b.Name == "Prediction" then
-                b.Text = "Movement Prediction: " .. (SETTINGS.PredictMovement and "ON" or "OFF")
-            end
-        end
-    end
-end
-
-local b = addSetting(aimPage, "", function()
-    SETTINGS.Enabled = not SETTINGS.Enabled
-    if not SETTINGS.Enabled then lockedTarget = nil end
-    updateSettings()
-end)
-b.Name = "Enabled"
-
-b = addSetting(aimPage, "", function()
-    SETTINGS.Smoothness += 2
-    if SETTINGS.Smoothness > 20 then SETTINGS.Smoothness = 2 end
-    updateSettings()
-end)
-b.Name = "Smooth"
-
-b = addSetting(aimPage, "", function()
-    SETTINGS.FOV += 20
-    if SETTINGS.FOV > 300 then SETTINGS.FOV = 60 end
-    updateSettings()
-end)
-b.Name = "FOV"
-
-b = addSetting(aimPage, "", function()
-    SETTINGS.MaxDistance += 50
-    if SETTINGS.MaxDistance > 500 then SETTINGS.MaxDistance = 100 end
-    updateSettings()
-end)
-b.Name = "Distance"
-
-b = addSetting(aimPage, "", function()
-    SETTINGS.TargetPart =
-        SETTINGS.TargetPart == "Head" and "HumanoidRootPart" or "Head"
-    updateSettings()
-end)
-b.Name = "Part"
-
-b = addSetting(visualPage, "", function()
-    SETTINGS.ShowFOV = not SETTINGS.ShowFOV
-    updateSettings()
-end)
-b.Name = "Visual"
-
-b = addSetting(settingsPage, "", function()
-    SETTINGS.HoldToAim = not SETTINGS.HoldToAim
-    updateSettings()
-end)
-b.Name = "Hold"
-
-b = addSetting(settingsPage, "", function()
-    SETTINGS.AutoFire = not SETTINGS.AutoFire
-    updateSettings()
-end)
-b.Name = "Auto"
-
-b = addSetting(settingsPage, "", function()
-    SETTINGS.PredictMovement = not SETTINGS.PredictMovement
-    updateSettings()
-end)
-b.Name = "Prediction"
-
-addSetting(settingsPage, "Unlock Target", function()
-    lockedTarget = nil
-    status.Text = "Target unlocked"
-end)
-
-updateSettings()
-
--- FOV circle
-local circle = Instance.new("Frame")
-circle.Name = "FOVCircle"
-circle.AnchorPoint = Vector2.new(0.5, 0.5)
-circle.Size = UDim2.fromOffset(SETTINGS.FOV * 2, SETTINGS.FOV * 2)
-circle.BackgroundTransparency = 1
-circle.Parent = gui
-corner(circle, 300)
-
-local circleStroke = Instance.new("UIStroke")
-circleStroke.Color = Color3.fromRGB(175, 125, 255)
-circleStroke.Thickness = 1.5
-circleStroke.Parent = circle
-
--- Mobile controls
-local mobile = Instance.new("Frame")
-mobile.Name = "MobileControls"
-mobile.Size = UDim2.fromOffset(150, 130)
-mobile.Position = UDim2.new(1, -165, 1, -155)
-mobile.BackgroundTransparency = 1
-mobile.Visible = UIS.TouchEnabled
-mobile.Parent = gui
-
-local mobileLock = makeButton(
-    mobile, "LOCK", UDim2.fromOffset(70, 45),
-    UDim2.fromOffset(0, 0)
+label(
+	sidebar, "DARK AIM V11",
+	UDim2.new(1, -20, 0, 25),
+	UDim2.new(0, 10, 1, -38),
+	10, MUTED
 )
 
-local mobileAimButton = makeButton(
-    mobile, "AIM: OFF", UDim2.fromOffset(70, 45),
-    UDim2.fromOffset(78, 0)
+local homePage = createPage("Home")
+local aimPage = createPage("Aim")
+local visualsPage = createPage("Visuals")
+local settingsPage = createPage("Settings")
+
+--========================================================
+-- DASHBOARD PAGE
+--========================================================
+
+label(
+	homePage, "Dashboard",
+	UDim2.new(1, -30, 0, 35),
+	UDim2.new(0, 15, 0, 15),
+	22, WHITE
+).Font = Enum.Font.GothamBold
+
+label(
+	homePage, "Welcome to your control center.",
+	UDim2.new(1, -30, 0, 25),
+	UDim2.new(0, 15, 0, 48),
+	12, MUTED
 )
 
-local mobileAuto = makeButton(
-    mobile, "AUTO: ON", UDim2.fromOffset(148, 40),
-    UDim2.fromOffset(0, 55)
+local targetCard = newFrame(
+	homePage,
+	UDim2.new(1, -30, 0, 100),
+	UDim2.new(0, 15, 0, 95),
+	PANEL_LIGHT
 )
 
--- Target helpers
-local function getHumanoid(model)
-    if not model then return nil end
-    return model:FindFirstChildOfClass("Humanoid")
+label(
+	targetCard, "CURRENT TARGET",
+	UDim2.new(1, -20, 0, 25),
+	UDim2.new(0, 12, 0, 12),
+	10, MUTED
+).TextXAlignment = Enum.TextXAlignment.Left
+
+local targetStatus = label(
+	targetCard, "Searching...",
+	UDim2.new(1, -20, 0, 35),
+	UDim2.new(0, 12, 0, 42),
+	19, PURPLE
+)
+targetStatus.TextXAlignment = Enum.TextXAlignment.Left
+targetStatus.Font = Enum.Font.GothamBold
+
+local systemCard = newFrame(
+	homePage,
+	UDim2.new(1, -30, 0, 90),
+	UDim2.new(0, 15, 0, 210),
+	PANEL_LIGHT
+)
+
+label(
+	systemCard, "SYSTEM STATUS",
+	UDim2.new(1, -20, 0, 25),
+	UDim2.new(0, 12, 0, 10),
+	10, MUTED
+).TextXAlignment = Enum.TextXAlignment.Left
+
+local systemStatus = label(
+	systemCard, "Hub ready",
+	UDim2.new(1, -20, 0, 35),
+	UDim2.new(0, 12, 0, 40),
+	16, GREEN
+)
+systemStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+--========================================================
+-- REUSABLE TOGGLE ROW
+--========================================================
+
+local function toggleRow(parent, titleText, description, settingName, y)
+	local row = newFrame(
+		parent,
+		UDim2.new(1, -30, 0, 70),
+		UDim2.new(0, 15, 0, y),
+		PANEL_LIGHT
+	)
+
+	local title = label(
+		row, titleText,
+		UDim2.new(0, 220, 0, 25),
+		UDim2.new(0, 12, 0, 9),
+		13, WHITE
+	)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Font = Enum.Font.GothamSemibold
+
+	local desc = label(
+		row, description,
+		UDim2.new(0, 220, 0, 20),
+		UDim2.new(0, 12, 0, 36),
+		10, MUTED
+	)
+	desc.TextXAlignment = Enum.TextXAlignment.Left
+
+	local toggle = button(
+		row, "",
+		UDim2.new(0, 90, 0, 34),
+		UDim2.new(1, -102, 0.5, -17)
+	)
+
+	local function refresh()
+		toggle.Text = Settings[settingName] and "ON" or "OFF"
+		toggle.BackgroundColor3 = Settings[settingName]
+			and PURPLE_DARK or PANEL
+	end
+
+	toggle.MouseButton1Click:Connect(function()
+		Settings[settingName] = not Settings[settingName]
+		refresh()
+	end)
+
+	refresh()
+	return refresh
+end
+
+--========================================================
+-- AIM PAGE
+--========================================================
+
+label(
+	aimPage, "Aim Controls",
+	UDim2.new(1, -30, 0, 35),
+	UDim2.new(0, 15, 0, 15),
+	21, WHITE
+).Font = Enum.Font.GothamBold
+
+toggleRow(
+	aimPage, "Automatic Target",
+	"Find and track a valid target automatically.",
+	"AutoTarget", 65
+)
+
+toggleRow(
+	aimPage, "Automatic Fire",
+	"Request shots through your equipped weapon.",
+	"AutoFire", 145
+)
+
+local smoothLabel = label(
+	aimPage, "Smoothness: " .. Settings.Smoothness,
+	UDim2.new(1, -30, 0, 25),
+	UDim2.new(0, 15, 0, 230),
+	12, WHITE
+)
+smoothLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local smoothMinus = button(
+	aimPage, "−",
+	UDim2.new(0, 50, 0, 35),
+	UDim2.new(0, 15, 0, 265)
+)
+local smoothPlus = button(
+	aimPage, "+",
+	UDim2.new(0, 50, 0, 35),
+	UDim2.new(0, 75, 0, 265)
+)
+
+local function refreshSmooth()
+	smoothLabel.Text = "Smoothness: " .. Settings.Smoothness
+end
+
+smoothMinus.MouseButton1Click:Connect(function()
+	Settings.Smoothness = math.max(1, Settings.Smoothness - 1)
+	refreshSmooth()
+end)
+
+smoothPlus.MouseButton1Click:Connect(function()
+	Settings.Smoothness = math.min(30, Settings.Smoothness + 1)
+	refreshSmooth()
+end)
+
+--========================================================
+-- VISUALS PAGE
+--========================================================
+
+label(
+	visualsPage, "Visual Controls",
+	UDim2.new(1, -30, 0, 35),
+	UDim2.new(0, 15, 0, 15),
+	21, WHITE
+).Font = Enum.Font.GothamBold
+
+toggleRow(
+	visualsPage, "FOV Circle",
+	"Show the target selection radius.",
+	"ShowFOV", 65
+)
+
+local fovLabel = label(
+	visualsPage, "FOV Size: " .. Settings.FOV,
+	UDim2.new(1, -30, 0, 25),
+	UDim2.new(0, 15, 0, 155),
+	12, WHITE
+)
+fovLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local fovMinus = button(
+	visualsPage, "−",
+	UDim2.new(0, 50, 0, 35),
+	UDim2.new(0, 15, 0, 190)
+)
+
+local fovPlus = button(
+	visualsPage, "+",
+	UDim2.new(0, 50, 0, 35),
+	UDim2.new(0, 75, 0, 190)
+)
+
+local function refreshFOV()
+	fovLabel.Text = "FOV Size: " .. Settings.FOV
+end
+
+fovMinus.MouseButton1Click:Connect(function()
+	Settings.FOV = math.max(40, Settings.FOV - 10)
+	refreshFOV()
+end)
+
+fovPlus.MouseButton1Click:Connect(function()
+	Settings.FOV = math.min(400, Settings.FOV + 10)
+	refreshFOV()
+end)
+
+--========================================================
+-- SETTINGS PAGE
+--========================================================
+
+label(
+	settingsPage, "Hub Settings",
+	UDim2.new(1, -30, 0, 35),
+	UDim2.new(0, 15, 0, 15),
+	21, WHITE
+).Font = Enum.Font.GothamBold
+
+local resetButton = button(
+	settingsPage, "RESET SETTINGS",
+	UDim2.new(1, -30, 0, 42),
+	UDim2.new(0, 15, 0, 70)
+)
+
+local resetStatus = label(
+	settingsPage, "",
+	UDim2.new(1, -30, 0, 30),
+	UDim2.new(0, 15, 0, 120),
+	11, GREEN
+)
+
+resetButton.MouseButton1Click:Connect(function()
+	Settings.AutoTarget = true
+	Settings.AutoFire = true
+	Settings.ShowFOV = true
+	Settings.FOV = 180
+	Settings.Smoothness = 10
+
+	refreshSmooth()
+	refreshFOV()
+	resetStatus.Text = "Settings restored."
+end)
+
+--========================================================
+-- FOV CIRCLE
+--========================================================
+
+local fovCircle = Instance.new("Frame")
+fovCircle.Name = "FOVCircle"
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.fromScale(0.5, 0.5)
+fovCircle.Size = UDim2.new(0, Settings.FOV * 2, 0, Settings.FOV * 2)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Parent = gui
+corner(fovCircle, 500)
+stroke(fovCircle, PURPLE, 1.5)
+
+--========================================================
+-- TARGET HELPERS
+--========================================================
+
+local function getCharacter()
+	return player.Character
 end
 
 local function getTargetPart(model)
-    if not model then return nil end
-
-    local part = model:FindFirstChild(SETTINGS.TargetPart, true)
-    if part and part:IsA("BasePart") then
-        return part
-    end
-
-    local root = model:FindFirstChild("HumanoidRootPart", true)
-    if root and root:IsA("BasePart") then
-        return root
-    end
-
-    return nil
+	if not model then return nil end
+	return model:FindFirstChild("Head")
+		or model:FindFirstChild("HumanoidRootPart")
 end
 
 local function validTarget(model)
-    if not model or not model:IsA("Model") then return false end
-    if model == player.Character then return false end
+	if not model or not model:IsDescendantOf(workspace) then
+		return false
+	end
 
-    local humanoid = getHumanoid(model)
-    local part = getTargetPart(model)
-    local character = player.Character
-    local myRoot = character and character:FindFirstChild("HumanoidRootPart")
+	if model == getCharacter() then
+		return false
+	end
 
-    if not humanoid or humanoid.Health <= 0 or not part or not myRoot then
-        return false
-    end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local part = getTargetPart(model)
+	local character = getCharacter()
+	local root = character and character:FindFirstChild("HumanoidRootPart")
 
-    return (part.Position - myRoot.Position).Magnitude <= SETTINGS.MaxDistance
+	if not humanoid or humanoid.Health <= 0 or not part or not root then
+		return false
+	end
+
+	if (part.Position - root.Position).Magnitude > Settings.MaxDistance then
+		return false
+	end
+
+	local targetPlayer = Players:GetPlayerFromCharacter(model)
+	if targetPlayer and player.Team and targetPlayer.Team == player.Team then
+		return false
+	end
+
+	local screenPos, visible = camera:WorldToViewportPoint(part.Position)
+	if not visible or screenPos.Z <= 0 then
+		return false
+	end
+
+	local center = camera.ViewportSize / 2
+	local distance = (
+		Vector2.new(screenPos.X, screenPos.Y) - center
+	).Magnitude
+
+	return distance <= Settings.FOV
 end
 
-local function getCandidates()
-    local candidates = {}
-    local seen = {}
+local function findTarget()
+	local best
+	local bestDistance = math.huge
+	local center = camera.ViewportSize / 2
+	local seen = {}
 
-    for _, otherPlayer in ipairs(Players:GetPlayers()) do
-        if otherPlayer ~= player and otherPlayer.Character then
-            local model = otherPlayer.Character
-            if not seen[model] then
-                seen[model] = true
-                table.insert(candidates, model)
-            end
-        end
-    end
+	for _, object in ipairs(workspace:GetDescendants()) do
+		if object:IsA("Humanoid") then
+			local model = object.Parent
 
-    for _, object in ipairs(workspace:GetDescendants()) do
-        if object:IsA("Humanoid") then
-            local model = object:FindFirstAncestorOfClass("Model")
-            if model and model ~= player.Character and not seen[model] then
-                seen[model] = true
-                table.insert(candidates, model)
-            end
-        end
-    end
+			if model and model:IsA("Model") and not seen[model] then
+				seen[model] = true
 
-    return candidates
+				if validTarget(model) then
+					local part = getTargetPart(model)
+					local screenPos = camera:WorldToViewportPoint(part.Position)
+					local distance = (
+						Vector2.new(screenPos.X, screenPos.Y) - center
+					).Magnitude
+
+					if distance < bestDistance then
+						bestDistance = distance
+						best = model
+					end
+				end
+			end
+		end
+	end
+
+	return best
 end
 
-local function findClosestTarget()
-    local camera = workspace.CurrentCamera
-    if not camera then return nil end
+--========================================================
+-- WEAPON HELPERS
+--========================================================
 
-    local center = camera.ViewportSize / 2
-    local bestDistance = SETTINGS.FOV
-    local bestModel = nil
+local function getEquippedWeapon()
+	local character = getCharacter()
+	if not character then return nil end
 
-    for _, model in ipairs(getCandidates()) do
-        if validTarget(model) then
-            local part = getTargetPart(model)
-            local screenPosition, onScreen =
-                camera:WorldToViewportPoint(part.Position)
+	for _, item in ipairs(character:GetChildren()) do
+		if item:IsA("Tool") then
+			local event = item:FindFirstChild("ShootEvent")
 
-            if onScreen and screenPosition.Z > 0 then
-                local screenDistance = (
-                    Vector2.new(screenPosition.X, screenPosition.Y) - center
-                ).Magnitude
+			if event and event:IsA("RemoteEvent") then
+				return item, event
+			end
+		end
+	end
 
-                if screenDistance <= bestDistance then
-                    bestDistance = screenDistance
-                    bestModel = model
-                end
-            end
-        end
-    end
-
-    return bestModel
+	return nil
 end
 
-local function toggleLock()
-    if lockedTarget and validTarget(lockedTarget) then
-        lockedTarget = nil
-        status.Text = "Target unlocked"
-    else
-        lockedTarget = findClosestTarget()
-        if lockedTarget then
-            status.Text = "Locked: " .. lockedTarget.Name
-        else
-            status.Text = "No target in FOV"
-        end
-    end
+local function fireAtTarget(target)
+	local tool, event = getEquippedWeapon()
+	if not tool or not event then
+		return false
+	end
+
+	local character = getCharacter()
+	local origin = character and (
+		character:FindFirstChild("Head")
+			or character:FindFirstChild("HumanoidRootPart")
+	)
+	local part = getTargetPart(target)
+
+	if not origin or not part then
+		return false
+	end
+
+	local direction = part.Position - origin.Position
+	if direction.Magnitude <= 0 then
+		return false
+	end
+
+	-- The server must validate the shot and calculate damage.
+	event:FireServer(direction.Unit)
+	return true
 end
 
-connect(mobileLock.MouseButton1Click, toggleLock)
+--========================================================
+-- NAVIGATION INITIAL STATE
+--========================================================
 
-connect(mobileAimButton.MouseButton1Click, function()
-    mobileAim = not mobileAim
-    mobileAimButton.Text = mobileAim and "AIM: ON" or "AIM: OFF"
+switchPage("Home")
+
+--========================================================
+-- ACCESS + LOADING FLOW
+--========================================================
+
+local function startHub()
+	if unlocked then return end
+	unlocked = true
+
+	tween(keyCard, 0.25, {
+		Position = UDim2.new(0.5, -185, 0.55, -165)
+	})
+
+	task.wait(0.25)
+	keyScreen.Visible = false
+	loading.Visible = true
+
+	tween(progress, 1.8, {
+		Size = UDim2.new(1, 0, 1, 0)
+	})
+
+	task.wait(1.85)
+	spinning = false
+
+	main.Visible = true
+	main.Size = UDim2.new(0, 610, 0, 400)
+	tween(main, 0.35, {
+		Size = UDim2.new(0, 650, 0, 430)
+	})
+
+	tween(loading, 0.35, {
+		BackgroundTransparency = 1
+	})
+
+	task.wait(0.4)
+	loading:Destroy()
+end
+
+local function checkKey()
+	if unlocked then return end
+
+	if keyBox.Text == ACCESS_KEY then
+		keyStatus.TextColor3 = GREEN
+		keyStatus.Text = "Access granted!"
+		unlock.Text = "ACCESS GRANTED"
+		task.wait(0.3)
+		startHub()
+	else
+		keyStatus.TextColor3 = RED
+		keyStatus.Text = "Incorrect key. Try again."
+		keyBox.Text = ""
+		tween(keyCard, 0.06, {
+			Position = UDim2.new(0.5, -178, 0.5, -165)
+		})
+		task.wait(0.07)
+		tween(keyCard, 0.06, {
+			Position = UDim2.new(0.5, -185, 0.5, -165)
+		})
+	end
+end
+
+unlock.MouseButton1Click:Connect(checkKey)
+
+keyBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		checkKey()
+	end
 end)
 
-connect(mobileAuto.MouseButton1Click, function()
-    SETTINGS.AutoFire = not SETTINGS.AutoFire
-    mobileAuto.Text = SETTINGS.AutoFire and "AUTO: ON" or "AUTO: OFF"
-    updateSettings()
-end)
+--========================================================
+-- AUTOMATIC TARGETING / FIRING LOOP
+--========================================================
 
--- One-time tutorial
-local tutorial = Instance.new("Frame")
-tutorial.Size = UDim2.fromOffset(320, 205)
-tutorial.Position = UDim2.new(0.5, -160, 0.5, -102)
-tutorial.BackgroundColor3 = Color3.fromRGB(25, 22, 35)
-tutorial.Visible = false
-tutorial.Parent = gui
-tutorial.ZIndex = 10
-corner(tutorial, 10)
-
-local tutorialStroke = Instance.new("UIStroke")
-tutorialStroke.Color = Color3.fromRGB(150, 110, 220)
-tutorialStroke.Thickness = 2
-tutorialStroke.Parent = tutorial
-
-local tutorialTitle = Instance.new("TextLabel")
-tutorialTitle.Size = UDim2.new(1, -20, 0, 35)
-tutorialTitle.Position = UDim2.fromOffset(10, 8)
-tutorialTitle.BackgroundTransparency = 1
-tutorialTitle.Text = "HOW TO USE THE HUB"
-tutorialTitle.TextColor3 = Color3.fromRGB(220, 195, 255)
-tutorialTitle.Font = Enum.Font.GothamBold
-tutorialTitle.TextSize = 16
-tutorialTitle.Parent = tutorial
-tutorialTitle.ZIndex = 11
-
-local tutorialText = Instance.new("TextLabel")
-tutorialText.Size = UDim2.new(1, -24, 0, 105)
-tutorialText.Position = UDim2.fromOffset(12, 45)
-tutorialText.BackgroundTransparency = 1
-tutorialText.TextColor3 = Color3.fromRGB(235, 230, 245)
-tutorialText.Font = Enum.Font.Gotham
-tutorialText.TextSize = 13
-tutorialText.TextWrapped = true
-tutorialText.TextYAlignment = Enum.TextYAlignment.Top
-tutorialText.Text =
-    "PC:\nQ = Lock / unlock target\nHold right mouse button = Aim\n\nMOBILE:\nLOCK = Lock / unlock target\nAIM = Toggle aiming\nAUTO = Toggle automatic shots"
-tutorialText.Parent = tutorial
-tutorialText.ZIndex = 11
-
-local gotIt = makeButton(
-    tutorial, "GOT IT",
-    UDim2.new(1, -24, 0, 36),
-    UDim2.fromOffset(12, 160)
-)
-gotIt.ZIndex = 11
-
-connect(gotIt.MouseButton1Click, function()
-    player:SetAttribute(TUTORIAL_ATTRIBUTE, true)
-    tutorial.Visible = false
-end)
-
-local function showTutorialOnce()
-    if not player:GetAttribute(TUTORIAL_ATTRIBUTE) then
-        tutorial.Visible = true
-    end
-end
-
--- Gun RemoteEvent lookup
-local function getShootEvent()
-    local character = player.Character
-    if not character then return nil end
-
-    for _, item in ipairs(character:GetChildren()) do
-        if item:IsA("Tool") then
-            local event = item:FindFirstChild("ShootEvent")
-            if event and event:IsA("RemoteEvent") then
-                return event
-            end
-        end
-    end
-
-    return nil
-end
-
-local function checkTool(tool)
-    if not tool:IsA("Tool") then return end
-
-    local event = tool:FindFirstChild("ShootEvent")
-    if event and event:IsA("RemoteEvent") then
-        status.Text = "Gun equipped: " .. tool.Name
-        showTutorialOnce()
-    end
-end
-
-local function watchCharacter(character)
-    clearCharacterConnections()
-    lockedTarget = nil
-
-    table.insert(characterConnections, character.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") then
-            task.delay(0.15, function()
-                if child.Parent == character then
-                    checkTool(child)
-                end
-            end)
-        end
-    end))
-
-    for _, child in ipairs(character:GetChildren()) do
-        if child:IsA("Tool") then
-            task.delay(0.15, function()
-                if child.Parent == character then
-                    checkTool(child)
-                end
-            end)
-        end
-    end
-end
-
-if player.Character then
-    watchCharacter(player.Character)
-end
-
-connect(player.CharacterAdded, watchCharacter)
-
--- PC inputs
-connect(UIS.InputBegan, function(input, processed)
-    if closed then return end
-
-    if input.KeyCode == Enum.KeyCode.Q and not processed then
-        toggleLock()
-    elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-        rightMouseDown = true
-
-        if SETTINGS.Enabled and (not lockedTarget or not validTarget(lockedTarget)) then
-            lockedTarget = findClosestTarget()
-            if lockedTarget then
-                status.Text = "Aiming at: " .. lockedTarget.Name
-            else
-                status.Text = "No target in FOV"
-            end
-        end
-    end
-end)
-
-connect(UIS.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        rightMouseDown = false
-    end
-end)
-
--- Continuous tracking, prediction and automatic shot requests
 RunService:BindToRenderStep(
-    RENDER_NAME,
-    Enum.RenderPriority.Camera.Value + 1,
-    function(dt)
-        if closed then return end
+	"DarkAimV11",
+	Enum.RenderPriority.Camera.Value + 1,
+	function(deltaTime)
+		camera = workspace.CurrentCamera
+		if not camera or not unlocked then return end
 
-        local camera = workspace.CurrentCamera
-        if not camera then return end
+		fovCircle.Position = UDim2.fromScale(0.5, 0.5)
+		fovCircle.Size = UDim2.new(
+			0, Settings.FOV * 2,
+			0, Settings.FOV * 2
+		)
+		fovCircle.Visible = Settings.ShowFOV
 
-        local center = camera.ViewportSize / 2
-        circle.Position = UDim2.fromOffset(center.X, center.Y)
-        circle.Size = UDim2.fromOffset(SETTINGS.FOV * 2, SETTINGS.FOV * 2)
-        circle.Visible = SETTINGS.ShowFOV
+		if not Settings.AutoTarget then
+			currentTarget = nil
+			targetStatus.Text = "Auto target disabled"
+			return
+		end
 
-        if not SETTINGS.Enabled then return end
+		if not validTarget(currentTarget)
+			or os.clock() - lastScan >= Settings.ScanInterval then
 
-        local aiming = SETTINGS.HoldToAim
-            and (rightMouseDown or mobileAim)
-            or (not SETTINGS.HoldToAim and lockedTarget ~= nil)
+			if not validTarget(currentTarget) then
+				currentTarget = nil
+			end
 
-        if aiming and (not lockedTarget or not validTarget(lockedTarget)) then
-            lockedTarget = findClosestTarget()
-        end
+			if not currentTarget then
+				currentTarget = findTarget()
+			end
 
-        if not lockedTarget or not validTarget(lockedTarget) then
-            if aiming then
-                status.Text = "Searching for target..."
-            end
-            return
-        end
+			lastScan = os.clock()
+		end
 
-        if not aiming then return end
+		if not currentTarget then
+			targetStatus.Text = "Searching for targets..."
+			systemStatus.Text = "Waiting for a valid target"
+			systemStatus.TextColor3 = MUTED
+			return
+		end
 
-        local part = getTargetPart(lockedTarget)
-        local humanoid = getHumanoid(lockedTarget)
+		local part = getTargetPart(currentTarget)
+		if not part then
+			currentTarget = nil
+			return
+		end
 
-        if not part or not humanoid then return end
+		targetStatus.Text = currentTarget.Name
+		systemStatus.Text = "Target locked"
+		systemStatus.TextColor3 = GREEN
 
-        -- Predict movement
-        local predictedPosition = part.Position
+		local desired = CFrame.lookAt(
+			camera.CFrame.Position,
+			part.Position
+		)
 
-        if SETTINGS.PredictMovement then
-            predictedPosition +=
-                part.AssemblyLinearVelocity * SETTINGS.PredictionStrength
-        end
+		local alpha = math.clamp(
+			deltaTime * Settings.Smoothness,
+			0,
+			1
+		)
 
-        -- Smooth camera tracking
-        local origin = camera.CFrame.Position
-        local goal = CFrame.lookAt(origin, predictedPosition)
-        local alpha = 1 - math.exp(-SETTINGS.Smoothness * dt)
+		camera.CFrame = camera.CFrame:Lerp(desired, alpha)
 
-        camera.CFrame = camera.CFrame:Lerp(
-            goal,
-            math.clamp(alpha, 0, 1)
-        )
+		if Settings.AutoFire
+			and os.clock() - lastShot >= Settings.FireInterval then
 
-        -- Automatic firing requests
-        if SETTINGS.AutoFire and os.clock() - lastShot >= FIRE_RATE then
-            local event = getShootEvent()
-            local character = player.Character
-            local head = character and character:FindFirstChild("Head")
-
-            if event and head then
-                local direction = predictedPosition - head.Position
-
-                if direction.Magnitude > 0 then
-                    event:FireServer(direction.Unit)
-                    lastShot = os.clock()
-                end
-            end
-        end
-    end
+			if getEquippedWeapon() then
+				if fireAtTarget(currentTarget) then
+					lastShot = os.clock()
+				end
+			end
+		end
+	end
 )
 
--- Cleanup
-local function cleanup()
-    if closed then return end
-    closed = true
+script.Destroying:Connect(function()
+	spinning = false
+	RunService:UnbindFromRenderStep("DarkAimV11")
+end)
 
-    RunService:UnbindFromRenderStep(RENDER_NAME)
-    clearCharacterConnections()
-
-    for _, c in ipairs(connections) do
-        c:Disconnect()
-    end
-
-    gui:Destroy()
-end
-
-connect(closeButton.MouseButton1Click, cleanup)
-
-print("Dark Aim Assist Pro V7 loaded")
+print("Dark Aim Assist V11 ready.")
